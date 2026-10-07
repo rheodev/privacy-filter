@@ -214,7 +214,7 @@ func (sd *secretDetector) detect(text string) []span {
 				isLikelyPlaceholder(cand) || hasJSONNoise(cand) {
 				continue
 			}
-			spans = append(spans, span{s, e, "[密钥]"})
+			spans = append(spans, span{s, e, "secret", "[SECRET]"})
 		}
 	}
 	// 上下文口令：只脱掉 value（第 2 个分组）
@@ -229,7 +229,7 @@ func (sd *secretDetector) detect(text string) []span {
 			if len(value) <= 16 && shannonEntropy(value) < 3.0 {
 				continue
 			}
-			spans = append(spans, span{m[4], m[5], "[密钥]"})
+			spans = append(spans, span{m[4], m[5], "secret", "[SECRET]"})
 		}
 	}
 	// 高熵兜底
@@ -251,7 +251,7 @@ func (sd *secretDetector) detect(text string) []span {
 			threshold = entropyMinStrict
 		}
 		if shannonEntropy(cand) >= threshold {
-			spans = append(spans, span{s, e, "[密钥]"})
+			spans = append(spans, span{s, e, "secret", "[SECRET]"})
 		}
 	}
 	return spans

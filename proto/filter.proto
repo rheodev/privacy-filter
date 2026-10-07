@@ -18,6 +18,7 @@ message RedactRequest {
 
 // Entity 是一个被脱敏的命中项。start/end 为 UTF-8 字节偏移。
 message Entity {
+  // 稳定的开放类型 ID：email、secret、phone、id、bank_card、ip 等；不是替换标签。
   string type = 1;
   int32 start = 2;
   int32 end = 3;

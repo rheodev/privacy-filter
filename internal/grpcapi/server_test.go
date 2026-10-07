@@ -16,7 +16,7 @@ import (
 
 // TestGRPCRedact 用 bufconn 起一个进程内 gRPC 服务，端到端验证 Redact。
 func TestGRPCRedact(t *testing.T) {
-	pf, err := filter.New("../../rules/gitleaks.toml")
+	pf, err := filter.New("../../rules/gitleaks.toml", filter.Config{})
 	if err != nil {
 		t.Fatalf("filter.New: %v", err)
 	}
@@ -45,10 +45,14 @@ func TestGRPCRedact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
-	if !strings.Contains(resp.GetRedacted(), "[邮箱]") || !strings.Contains(resp.GetRedacted(), "[密钥]") {
+	if !strings.Contains(resp.GetRedacted(), "[EMAIL]") || !strings.Contains(resp.GetRedacted(), "[SECRET]") {
 		t.Errorf("脱敏不全: %q", resp.GetRedacted())
 	}
 	if !resp.GetHit() || resp.GetCount() < 2 {
 		t.Errorf("hit/count 不对: hit=%v count=%d", resp.GetHit(), resp.GetCount())
+	}
+	entities := resp.GetEntities()
+	if len(entities) != 2 || entities[0].GetType() != "email" || entities[1].GetType() != "secret" {
+		t.Errorf("实体类型不是稳定 ID: %+v", entities)
 	}
 }

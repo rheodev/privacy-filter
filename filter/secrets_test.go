@@ -46,7 +46,7 @@ func TestRedactOverlappingSecretContext(t *testing.T) {
 			name = "gitleaks"
 		}
 		t.Run(name, func(t *testing.T) {
-			f, err := New(rules)
+			f, err := New(rules, Config{})
 			if err != nil {
 				t.Fatal(err)
 			}

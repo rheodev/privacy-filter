@@ -5,11 +5,12 @@
 package filter
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
 
-// Entity 是一个被脱敏的命中项。Start/End 为 UTF-8 字节偏移。
+// Entity 是一个被脱敏的命中项。Type 是稳定的开放类型 ID，Start/End 为 UTF-8 字节偏移。
 type Entity struct {
 	Type  string `json:"type"`
 	Start int    `json:"start"`
@@ -25,25 +26,51 @@ type Result struct {
 	Entities []Entity `json:"entities"`
 }
 
+// Config 配置替换文本。按类型指定的标签优先于全局标签，最后使用默认标签。
+// Replacement 为空表示使用默认标签；ReplacementLabels 接受任意非空类型 ID。
+type Config struct {
+	Replacement       string
+	ReplacementLabels map[string]string
+}
+
 // span 是各检测层内部产出的区间。
 type span struct {
-	start, end int
-	label      string
+	start, end   int
+	entityType   string
+	defaultLabel string
 }
 
 // Filter 持有编译好的规则。创建后只读，可并发安全地复用。
 type Filter struct {
-	secrets *secretDetector
+	secrets           *secretDetector
+	replacement       string
+	replacementLabels map[string]string
 }
 
 // New 创建一个 Filter。gitleaksTOML 为 gitleaks 规则文件路径；
-// 传空字符串则只用内置兜底规则。文件存在但解析失败时返回 error。
-func New(gitleaksTOML string) (*Filter, error) {
+// 传空字符串则只用内置兜底规则。规则或替换配置无效时返回 error。
+func New(gitleaksTOML string, cfg Config) (*Filter, error) {
+	if cfg.Replacement != "" && strings.TrimSpace(cfg.Replacement) == "" {
+		return nil, fmt.Errorf("replacement must not be whitespace-only")
+	}
+	var labels map[string]string
+	if len(cfg.ReplacementLabels) != 0 {
+		labels = make(map[string]string, len(cfg.ReplacementLabels))
+		for entityType, label := range cfg.ReplacementLabels {
+			if entityType == "" || strings.TrimSpace(entityType) != entityType {
+				return nil, fmt.Errorf("replacement_labels key %q must be nonempty without edge whitespace", entityType)
+			}
+			if strings.TrimSpace(label) == "" {
+				return nil, fmt.Errorf("replacement_labels[%q] must be nonempty and not whitespace-only", entityType)
+			}
+			labels[entityType] = label
+		}
+	}
 	sd, err := newSecretDetector(gitleaksTOML)
 	if err != nil {
 		return nil, err
 	}
-	return &Filter{secrets: sd}, nil
+	return &Filter{secrets: sd, replacement: cfg.Replacement, replacementLabels: labels}, nil
 }
 
 // Stats 返回已加载的规则数，以及因语法不兼容被跳过的规则数。
@@ -58,34 +85,45 @@ func (f *Filter) Redact(text string) Result {
 	spans = append(spans, f.secrets.detect(text)...) // 密钥 / 凭证
 
 	merged := mergeSpans(spans)
+	return f.render(text, merged)
+}
 
-	// 单遍扫描重建文本：merged 已按起点升序且互不重叠，O(n)
+// render 单遍重建文本与实体；merged 已按起点升序且互不重叠。
+func (f *Filter) render(text string, merged []span) Result {
+	if len(merged) == 0 {
+		return Result{Redacted: text, Entities: []Entity{}}
+	}
 	var b strings.Builder
+	entities := make([]Entity, len(merged))
 	prev := 0
-	for _, s := range merged {
+	for i, s := range merged {
+		label := s.defaultLabel
+		if f.replacement != "" {
+			label = f.replacement
+		}
+		if f.replacementLabels != nil {
+			if custom, ok := f.replacementLabels[s.entityType]; ok {
+				label = custom
+			}
+		}
 		b.WriteString(text[prev:s.start])
-		b.WriteString(s.label)
+		b.WriteString(label)
+		entities[i] = Entity{Type: s.entityType, Start: s.start, End: s.end, Text: text[s.start:s.end]}
 		prev = s.end
 	}
 	b.WriteString(text[prev:])
-	out := b.String()
-
-	entities := make([]Entity, len(merged))
-	for i, s := range merged {
-		entities[i] = Entity{Type: s.label, Start: s.start, End: s.end, Text: text[s.start:s.end]}
-	}
 	return Result{
-		Redacted: out,
-		Hit:      len(merged) > 0,
+		Redacted: b.String(),
+		Hit:      true,
 		Count:    len(merged),
 		Entities: entities,
 	}
 }
 
 // mergeSpans 丢弃无效与重叠区间：按起点升序、同起点取更长者，
-// 贪心保留互不重叠的区间。
+// 贪心保留互不重叠的区间。原地压缩调用方的内部切片，避免复制候选区间。
 func mergeSpans(spans []span) []span {
-	var valid []span
+	valid := spans[:0]
 	for _, s := range spans {
 		if s.start >= 0 && s.start < s.end {
 			valid = append(valid, s)
@@ -97,7 +135,7 @@ func mergeSpans(spans []span) []span {
 		}
 		return valid[i].end > valid[j].end
 	})
-	merged := make([]span, 0, len(valid))
+	merged := valid[:0]
 	lastEnd := -1
 	for _, s := range valid {
 		if s.start >= lastEnd {
