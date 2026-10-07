@@ -312,8 +312,9 @@ func hasStrongSecretContext(text string, start, end int) bool {
 	}
 	last := locs[len(locs)-1]
 	candStartInRegion := start - lo
-	// 关键词起点 >= 候选起点 → 关键词本身就在候选串里（如 token=xxx 整段都匹配）→ 强
-	if last[0] >= candStartInRegion {
+	// 关键词结束 >= 候选起点 → 紧贴或落在候选串里 → 强。
+	// 也包含 api keyxxx 这种关键词跨过候选起点的情况，避免下面切片起点大于终点。
+	if last[1] >= candStartInRegion {
 		return true
 	}
 	// 关键词在 lookback 里：检查关键词结束 → 候选起点 之间是否只剩赋值字符
